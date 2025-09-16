@@ -4,12 +4,14 @@ A fast Go library for analyzing streaming manifests (DASH MPD and HLS M3U8). Ext
 
 ## Features
 
-- **Fast**: Direct manifest parsing vs ffprobe's binary media analysis
+- **Fast**: Direct manifest parsing vs ffprobe's binary media analysis (36x speedup)
 - **Universal**: Supports both DASH (.mpd) and HLS (.m3u8) manifests
 - **Smart**: Automatic codec detection and pixel format inference
 - **Compatible**: Output format matches ffprobe JSON structure
-- **Configurable**: Proxy support, custom headers, timeouts
-- **Clean**: Well-structured Go package with comprehensive documentation
+- **Resilient**: Production-grade retry mechanisms with circuit breaker pattern
+- **Configurable**: Proxy support, custom headers, timeouts, compression
+- **Robust**: Comprehensive error handling, logging, and context cancellation
+- **Clean**: Well-structured Go package with extensive documentation and tests
 
 ## Installation
 
@@ -51,7 +53,7 @@ func main() {
 ## Advanced Usage
 
 ```go
-// With custom options
+// With custom options and retry mechanisms
 opts := &probe.ProbeOptions{
     ProxyURL:       "http://proxy:8080",
     UserAgent:      "MyApp/1.0",
@@ -59,9 +61,51 @@ opts := &probe.ProbeOptions{
     CustomHeaders: map[string]string{
         "Authorization": "Bearer token123",
     },
+    RetryConfig: &probe.RetryConfig{
+        MaxRetries:        3,
+        InitialDelay:      100 * time.Millisecond,
+        MaxDelay:          5 * time.Second,
+        BackoffMultiplier: 2.0,
+        Jitter:            true,
+        RetryableErrors:   []probe.ErrorType{probe.ErrorTypeNetwork, probe.ErrorTypeTimeout},
+    },
+    CircuitBreakerConfig: &probe.CircuitBreakerConfig{
+        Enabled:             true,
+        FailureThreshold:    5,
+        ResetTimeout:        30 * time.Second,
+        HalfOpenMaxRequests: 3,
+    },
 }
 
 output, err := probe.ProbeManifest(manifestURL, opts)
+
+// With context support
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+output, err = probe.ProbeManifestWithContext(ctx, manifestURL, opts)
+```
+
+## Error Handling
+
+```go
+output, err := probe.ProbeManifest(url, opts)
+if err != nil {
+    var probeErr *probe.ProbeError
+    if errors.As(err, &probeErr) {
+        switch probeErr.Type {
+        case probe.ErrorTypeNetwork:
+            // Handle network errors (retryable)
+        case probe.ErrorTypeTimeout:
+            // Handle timeout errors (retryable)
+        case probe.ErrorTypeAuth:
+            // Handle authentication errors (not retryable)
+        case probe.ErrorTypeParsing:
+            // Handle parsing errors (not retryable)
+        case probe.ErrorTypeValidation:
+            // Handle validation errors (not retryable)
+        }
+    }
+}
 ```
 
 ## CLI Tool
