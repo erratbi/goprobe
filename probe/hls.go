@@ -8,7 +8,7 @@ import (
 )
 
 // parseHLSManifest parses an HLS M3U8 manifest and returns stream information
-func parseHLSManifest(content string) (*Output, error) {
+func parseHLSManifest(content string, manifestURL string) (*Output, error) {
 	var streams []StreamInfo
 	streamIndex := 0
 

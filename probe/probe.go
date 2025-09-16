@@ -4,8 +4,11 @@
 package probe
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"time"
 )
 
 // StreamInfo represents information about a media stream
@@ -63,23 +66,116 @@ type ProbeOptions struct {
 //       fmt.Printf("Stream %s: %s %s\n", stream.StreamID, stream.Type, stream.Codec)
 //   }
 func ProbeManifest(manifestURL string, opts *ProbeOptions) (*Output, error) {
-	// Create HTTP client
-	httpClient, err := NewHTTPClient(manifestURL, opts)
+	return ProbeManifestWithContext(context.Background(), manifestURL, opts)
+}
+
+// ProbeManifestWithContext fetches and analyzes a streaming manifest URL with context support.
+// This version supports cancellation and timeout through the context parameter.
+func ProbeManifestWithContext(ctx context.Context, manifestURL string, opts *ProbeOptions) (*Output, error) {
+	start := time.Now()
+	
+	logInfo(ctx, "Starting manifest probe", map[string]interface{}{
+		"url": manifestURL,
+	})
+
+	// Validate URL
+	parsedURL, err := validateURL(manifestURL)
 	if err != nil {
+		logError(ctx, "URL validation failed", map[string]interface{}{
+			"url": manifestURL,
+			"error": err.Error(),
+		})
+		return nil, err
+	}
+
+	// Validate options
+	if err := validateProbeOptions(opts); err != nil {
+		logError(ctx, "Options validation failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return nil, err
+	}
+
+	// Create HTTP client
+	httpClient, err := NewHTTPClient(parsedURL.String(), opts)
+	if err != nil {
+		logError(ctx, "HTTP client creation failed", map[string]interface{}{
+			"url": parsedURL.String(),
+			"error": err.Error(),
+		})
 		return nil, err
 	}
 
 	// Fetch manifest content
-	body, err := httpClient.FetchManifest(manifestURL)
+	fetchStart := time.Now()
+	body, err := httpClient.FetchManifest(parsedURL.String())
 	if err != nil {
+		logError(ctx, "Manifest fetch failed", map[string]interface{}{
+			"url": parsedURL.String(),
+			"duration": time.Since(fetchStart),
+			"error": err.Error(),
+		})
+		return nil, err
+	}
+
+	logDebug(ctx, "Manifest fetched successfully", map[string]interface{}{
+		"url": parsedURL.String(),
+		"size": len(body),
+		"fetch_duration": time.Since(fetchStart),
+	})
+
+	// Validate manifest content
+	if len(body) == 0 {
+		err := NewParsingError(parsedURL.String(), "unknown", fmt.Errorf("empty manifest content"))
+		logError(ctx, "Empty manifest content", map[string]interface{}{
+			"url": parsedURL.String(),
+		})
+		return nil, err
+	}
+
+	if len(body) > 50*1024*1024 { // 50MB limit
+		err := NewParsingError(parsedURL.String(), "unknown", fmt.Errorf("manifest too large (%d bytes)", len(body)))
+		logError(ctx, "Manifest too large", map[string]interface{}{
+			"url": parsedURL.String(),
+			"size": len(body),
+		})
 		return nil, err
 	}
 
 	// Detect format and parse
+	parseStart := time.Now()
+	var output *Output
 	if strings.Contains(body, "#EXTM3U") {
-		return parseHLSManifest(body)
+		logDebug(ctx, "Detected HLS manifest", map[string]interface{}{
+			"url": parsedURL.String(),
+		})
+		output, err = parseHLSManifest(body, parsedURL.String())
+	} else {
+		logDebug(ctx, "Detected MPD manifest", map[string]interface{}{
+			"url": parsedURL.String(),
+		})
+		output, err = parseMPDManifest(body, parsedURL.String())
 	}
-	return parseMPDManifest(body)
+
+	if err != nil {
+		logError(ctx, "Manifest parsing failed", map[string]interface{}{
+			"url": parsedURL.String(),
+			"parse_duration": time.Since(parseStart),
+			"error": err.Error(),
+		})
+		return nil, err
+	}
+
+	totalDuration := time.Since(start)
+	logInfo(ctx, "Manifest probe completed successfully", map[string]interface{}{
+		"url": parsedURL.String(),
+		"streams_found": len(output.Streams),
+		"total_duration": totalDuration,
+		"fetch_duration": time.Since(fetchStart),
+		"parse_duration": time.Since(parseStart),
+	})
+
+	return output, nil
 }
 
 // OutputJSON marshals the output to formatted JSON.

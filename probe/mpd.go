@@ -57,10 +57,10 @@ type Representation struct {
 }
 
 // parseMPDManifest parses an MPD manifest and returns stream information
-func parseMPDManifest(content string) (*Output, error) {
+func parseMPDManifest(content string, manifestURL string) (*Output, error) {
 	var mpd MPD
 	if err := xml.Unmarshal([]byte(content), &mpd); err != nil {
-		return nil, fmt.Errorf("error parsing MPD: %w", err)
+		return nil, NewParsingError(manifestURL, "MPD", err)
 	}
 
 	var streams []StreamInfo

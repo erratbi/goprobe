@@ -49,7 +49,7 @@ func getPixelFormat(codecString string, videoCodec string) string {
 		return "yuv420p" // Main profile
 	}
 
-	if strings.Contains(codecString, "vp9") {
+	if strings.Contains(codecString, "vp09") {
 		// VP9 codec
 		if strings.Contains(codecString, "vp09.02") {
 			return "yuv420p10le" // Profile 2

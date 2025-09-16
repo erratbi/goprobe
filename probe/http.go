@@ -3,6 +3,7 @@ package probe
 import (
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/imroc/req/v3"
@@ -29,10 +30,39 @@ func NewHTTPClient(targetURL string, opts *ProbeOptions) (*HTTPClient, error) {
 func (h *HTTPClient) FetchManifest(manifestURL string) (string, error) {
 	resp, err := h.client.R().Get(manifestURL)
 	if err != nil {
-		return "", fmt.Errorf("error fetching manifest: %w", err)
+		// Check if it's a timeout error
+		if isTimeoutError(err) {
+			return "", NewTimeoutError(manifestURL, 30) // Default timeout
+		}
+		return "", NewNetworkError(manifestURL, err)
 	}
 
-	return resp.String(), nil
+	// Check HTTP status code
+	statusCode := resp.StatusCode
+	if statusCode >= 400 && statusCode < 500 {
+		return "", NewAuthError(manifestURL, statusCode)
+	}
+	if statusCode >= 500 {
+		return "", NewNetworkError(manifestURL, fmt.Errorf("server error: HTTP %d", statusCode))
+	}
+	if statusCode != 200 {
+		return "", NewNetworkError(manifestURL, fmt.Errorf("unexpected status code: %d", statusCode))
+	}
+
+	body := resp.String()
+	
+	// Basic content validation
+	if len(body) == 0 {
+		return "", NewNetworkError(manifestURL, fmt.Errorf("received empty response"))
+	}
+
+	return body, nil
+}
+
+// isTimeoutError checks if an error is timeout-related
+func isTimeoutError(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "timeout") ||
+		   strings.Contains(strings.ToLower(err.Error()), "deadline exceeded")
 }
 
 // createConfiguredClient creates a req client with all necessary headers and settings
