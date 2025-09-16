@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -11,7 +12,8 @@ import (
 
 // HTTPClient wraps the req client with manifest-specific configuration
 type HTTPClient struct {
-	client *req.Client
+	client         *req.Client
+	retryExecutor  *RetryExecutor
 }
 
 // NewHTTPClient creates a new HTTP client configured for manifest fetching
@@ -23,12 +25,53 @@ func NewHTTPClient(targetURL string, opts *ProbeOptions) (*HTTPClient, error) {
 
 	client := createConfiguredClient(parsedURL, opts)
 	
-	return &HTTPClient{client: client}, nil
+	// Setup retry executor if retry config is provided
+	var retryExecutor *RetryExecutor
+	if opts != nil && opts.RetryConfig != nil {
+		retryExecutor = NewRetryExecutor(opts.RetryConfig, opts.CircuitBreakerConfig)
+	}
+	
+	return &HTTPClient{
+		client:        client,
+		retryExecutor: retryExecutor,
+	}, nil
 }
 
 // FetchManifest fetches the manifest content from the given URL
 func (h *HTTPClient) FetchManifest(manifestURL string) (string, error) {
-	resp, err := h.client.R().Get(manifestURL)
+	return h.FetchManifestWithContext(context.Background(), manifestURL)
+}
+
+// FetchManifestWithContext fetches the manifest content with context support
+func (h *HTTPClient) FetchManifestWithContext(ctx context.Context, manifestURL string) (string, error) {
+	var result string
+	
+	wrappedOperation := func() error {
+		body, err := h.fetchOnce(ctx, manifestURL)
+		if err != nil {
+			return err
+		}
+		result = body
+		return nil
+	}
+	
+	// Use retry executor if available
+	if h.retryExecutor != nil {
+		err := h.retryExecutor.Execute(ctx, wrappedOperation)
+		if err != nil {
+			return "", err
+		}
+		return result, nil
+	}
+	
+	// No retry, execute once
+	body, err := h.fetchOnce(ctx, manifestURL)
+	return body, err
+}
+
+// fetchOnce performs a single HTTP request
+func (h *HTTPClient) fetchOnce(ctx context.Context, manifestURL string) (string, error) {
+	resp, err := h.client.R().SetContext(ctx).Get(manifestURL)
 	if err != nil {
 		// Check if it's a timeout error
 		if isTimeoutError(err) {

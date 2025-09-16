@@ -50,6 +50,12 @@ type ProbeOptions struct {
 	
 	// DisableCamouflage disables browser-like headers (origin, referer, etc.)
 	DisableCamouflage bool
+	
+	// RetryConfig configures retry behavior (nil = no retries)
+	RetryConfig *RetryConfig
+	
+	// CircuitBreakerConfig configures circuit breaker (nil = disabled)
+	CircuitBreakerConfig *CircuitBreakerConfig
 }
 
 // ProbeManifest fetches and analyzes a streaming manifest URL.
@@ -108,7 +114,7 @@ func ProbeManifestWithContext(ctx context.Context, manifestURL string, opts *Pro
 
 	// Fetch manifest content
 	fetchStart := time.Now()
-	body, err := httpClient.FetchManifest(parsedURL.String())
+	body, err := httpClient.FetchManifestWithContext(ctx, parsedURL.String())
 	if err != nil {
 		logError(ctx, "Manifest fetch failed", map[string]interface{}{
 			"url": parsedURL.String(),
